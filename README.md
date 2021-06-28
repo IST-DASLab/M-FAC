@@ -1,3 +1,5 @@
+# M-FAC
+
 This repository contains efficient reference implementations of the static and
 dynamic M-FAC algorithms plus some sample code demonstrating their use in
 optimization and pruning. 
@@ -17,8 +19,7 @@ More concretely, it contains the following:
 - A script for running simple one-shot (& recomputation) experiments: `main_prun.py`
 - Some standard library code for models, data loading, etc.
 
-Optimization:
-=============
+## Optimization:
 
 The CUDA kernels for more efficient coefficient computation: `python
 setup_cuda.py install`. The code runs without doing so, but substantially
@@ -49,8 +50,7 @@ algorithm, `--weightdecay` the weight decay, `--batchsize` the batch size and
 Finally, it is worth noting that the optimizer implementation `optim.MFAC` also
 has support for sparse optimization.
 
-Pruning:
-========
+## Pruning:
 
 The file `main_prun.py` provides a simple interface for executing various
 one-shot experiments.  Only support for ResNet20/CIFAR with a corresponding
