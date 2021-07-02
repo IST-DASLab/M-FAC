@@ -43,7 +43,7 @@ class HInvFastUpMulti:
             self.grads.append(grads[:, start:end].to(gpus[i]))
         self.dots = torch.zeros((self.m, self.m), device=self.dev, dtype=self.dtype) # matrix $GG^T$
         for i in range(len(gpus)):
-            self.dots += self.grads[i].matmul(self.grads[i].t())
+            self.dots += self.grads[i].matmul(self.grads[i].t()).to(self.dev)
 
         self.last = 0 # ringbuffer index
         self.giHig = self.lambd * self.dots # matrix $D$
