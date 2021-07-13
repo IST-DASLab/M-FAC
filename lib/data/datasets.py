@@ -24,7 +24,7 @@ def classification_dataset_str_from_arch(arch):
     elif 'cifar' in arch:
         dataset = 'cifar10'
     elif 'mnist' in arch:
-        dataset = 'mnist' 
+        dataset = 'mnist'
     else:
         dataset = 'imagenet'
     return dataset
@@ -55,7 +55,7 @@ def __dataset_factory(dataset):
 def get_datasets(dataset, dataset_dir, **kwargs):
     datasets_fn = __dataset_factory(dataset)
     if dataset == 'imagenet':
-        return datasets_fn(dataset_dir, kwargs['use_aa'], 
+        return datasets_fn(dataset_dir, kwargs['use_aa'],
             kwargs['use_ra'], kwargs['remode'], kwargs['reprob'], kwargs['num_aug_splits'])
     return datasets_fn(dataset_dir)
 
@@ -74,7 +74,7 @@ def blobs_get_datasets(dataset_dir=None):
                                            centers=3)
         X_train, Y_train = torch.FloatTensor(X[:-5000]), torch.FloatTensor(Y[:-5000])
         X_test, Y_test = torch.FloatTensor(X[-5000:]), torch.FloatTensor(Y[-5000:])
-        
+
         # making dirs to save train/test
         os.makedirs(train_dir)
         os.makedirs(test_dir)
@@ -152,19 +152,10 @@ def cifar100_get_datasets(data_dir):
     return train_dataset, test_dataset
 
 def imagenet_get_datasets(data_dir, use_aa=False, tao_augm=False):
-    # print(use_aa)
-    # exit()
     train_dir = os.path.join(data_dir, 'train')
     test_dir = os.path.join(data_dir, 'val')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                     std=[0.229, 0.224, 0.225])
-
-    # train_transform = transforms.Compose([
-    #     transforms.RandomResizedCrop(224),
-    #     transforms.RandomHorizontalFlip(),
-    #     transforms.ToTensor(),
-    #     normalize,
-    # ])
 
     input_size = 224
 
@@ -185,10 +176,6 @@ def imagenet_get_datasets(data_dir, use_aa=False, tao_augm=False):
         aa_policy = auto_augment_policy('v0', aa_params)
         train_transform += [AutoAugment(aa_policy)]
 
-    # train_transform += [
-    #     transforms.ToTensor(),
-    #     normalize,
-    # ]
     train_transform = transforms.Compose(train_transform)
 
     train_dataset = datasets.ImageFolder(train_dir, train_transform)
@@ -205,21 +192,13 @@ def imagenet_get_datasets(data_dir, use_aa=False, tao_augm=False):
     return train_dataset, test_dataset
 
 
-def imagenet_get_datasets1(data_dir, use_aa=False, use_ra=False, 
+def imagenet_get_datasets1(data_dir, use_aa=False, use_ra=False,
     remode='const', reprob=0., num_aug_splits=0.):
-    # print(use_aa)
-    # exit()
     train_dir = os.path.join(data_dir, 'train')
     test_dir = os.path.join(data_dir, 'val')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                     std=[0.229, 0.224, 0.225])
 
-    # train_transform = transforms.Compose([
-    #     transforms.RandomResizedCrop(224),
-    #     transforms.RandomHorizontalFlip(),
-    #     transforms.ToTensor(),
-    #     normalize,
-    # ])
     mean=[0.485, 0.456, 0.406]
     std=[0.229, 0.224, 0.225]
     img_size_min = 224
@@ -238,18 +217,16 @@ def imagenet_get_datasets1(data_dir, use_aa=False, use_ra=False,
         aa_policy = auto_augment_policy('v0', aa_params)
         train_transform_2 = [AutoAugment(aa_policy)]
     if use_ra is not None:
-        print('Here')
         train_transform_2 = [rand_augment_transform(use_ra, aa_params)]
     train_transform_3 = [
         transforms.ToTensor(),
         normalize,
     ]
     if reprob > 0:
-        print('Here')
-        erase_tfm = RandomErasing(reprob, mode=remode, max_count=1, 
+        erase_tfm = RandomErasing(reprob, mode=remode, max_count=1,
                         num_splits=num_aug_splits, device='cpu')
         train_transform_3 += [erase_tfm]
-    
+
     test_transform = transforms.Compose([
         transforms.Resize(256),
         transforms.CenterCrop(224),
@@ -259,11 +236,9 @@ def imagenet_get_datasets1(data_dir, use_aa=False, use_ra=False,
 
     test_dataset = datasets.ImageFolder(test_dir, test_transform)
     if num_aug_splits > 0:
-        print('Here')
         train_dataset = Dataset(train_dir)
         train_dataset = AugMixDataset(train_dataset, num_splits=num_aug_splits)
-        print(train_transform_1, train_transform_2, train_transform_3)
-        train_dataset.transform = list(map(transforms.Compose, 
+        train_dataset.transform = list(map(transforms.Compose,
             [train_transform_1, train_transform_2, train_transform_3]))
     else:
         train_transform = transforms.Compose(

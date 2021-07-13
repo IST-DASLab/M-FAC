@@ -5,3 +5,5 @@ datasets
 *egg-info
 pruned.pth
 trained.pth
+.vscode/
+.history/
