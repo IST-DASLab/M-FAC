@@ -6,16 +6,18 @@ import argparse
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from torch.nn import Linear
+from torch.nn.modules.conv import _ConvNd
 
 from prun import *
-from lib.data.datasets import *
+from lib.data.datasets import get_datasets
 
 
-N_GRADS = 1024 
-N_PERGRAD = 32 
+N_GRADS = 1024
+N_PERGRAD = 32
 
-EVAL_BATCHSIZE = 256 
-N_WORKERS = 6 
+EVAL_BATCHSIZE = 256
+N_WORKERS = 6
 
 
 def load_model(path, model):
@@ -68,8 +70,6 @@ def zero_grads(model):
         p.grad = None
 
 def collect_grads(model, pruner, data, npergrad=N_PERGRAD):
-    named_parameters = dict(model.named_parameters())
-
     criterion = nn.functional.cross_entropy
     i = 0
     while True:
@@ -77,7 +77,7 @@ def collect_grads(model, pruner, data, npergrad=N_PERGRAD):
             data, shuffle=False, batch_size=npergrad, num_workers=N_WORKERS, pin_memory=True
         ):
             if i == pruner.ngrads:
-                return 
+                return
             x, y = batch
             x = x.to(model.device)
             y = y.to(model.device)
@@ -111,17 +111,18 @@ def oneshot_prune(
             state_dict = model.state_dict()
             pruner.set_pvec(w)
             print('Evaluating ...')
-            print('%.2f %.3f' % (sparsity, test(model, test_data)))
+            print('sparsity = %.2f\nvalidation_accuracy = %.3f' % (sparsity, test(model, test_data)))
             torch.save(model.state_dict(), 'pruned.pth')
             model.load_state_dict(state_dict)
- 
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--model', choices=['resnet20'], required=True) 
-    parser.add_argument('--dataset', type=str, required=True)
-    parser.add_argument('--pruner', choices=['mag', 'mfac'], required=True)
+    parser.add_argument('--model', choices=['resnet20'], required=True, help="This is an example script to demonstrate MFAC pruning on ResNet20/CIFAR10 model")
+    parser.add_argument('--dataset_path', type=str, required=True)
+    parser.add_argument('--pruner', choices=['GMP', 'MFAC'], required=True,
+    help="GMP - global magnitude pruner; MFAC - matrix free approximations of second order information")
 
     parser.add_argument('--ngrads', type=int, default=N_GRADS)
     parser.add_argument('--blocksize', type=int, default=-1)
@@ -136,28 +137,29 @@ if __name__ == '__main__':
     args1 = parser.parse_args()
 
     if args1.model == 'resnet20':
-        from lib.models.resnet_cifar10 import *
+        from lib.models.resnet_cifar10 import resnet20
         model = resnet20()
         load_model('checkpoints/resnet20_cifar10.pth.tar', model)
-        train_data, test_data = cifar10_get_datasets(args1.dataset)
+        train_data, test_data = get_datasets('cifar10', args1.dataset_path)
+        # prune only weights of Linear and Conv layers - standard
         params = [
-            n for n, _ in model.named_parameters() if ('conv' in n or 'fc' in n) and 'bias' not in n
+            name + ".weight" for name, mod in model.named_modules() if (isinstance(mod, Linear) or isinstance(mod, _ConvNd))
         ]
 
     dev = torch.device('cuda:0')
     model = model.to(dev)
     model.device = dev
     model.dtype = torch.float32
-    
+
     if args1.model == 'resnet20':
         # Fix messed up batch-norm stats of pretrained model
         reset_bnstats(model, train_data)
     model.eval() # freeze batch-norm params
 
     pruners = {
-        'mag': lambda: MagPruner(model, params), 
-        'mfac': lambda: MFACPruner(
-            model, params, args1.ngrads, 
+        'GMP': lambda: MagPruner(model, params),
+        'MFAC': lambda: MFACPruner(
+            model, params, args1.ngrads,
             blocksize=args1.blocksize, pages=args1.pages, perbatch=args1.perbatch
         )
     }
@@ -165,7 +167,7 @@ if __name__ == '__main__':
 
     oneshot_prune(
         model, pruner,
-        args1.sparsities, args1.recomps, args1.tests, 
-        train_data, test_data, 
+        args1.sparsities, args1.recomps, args1.tests,
+        train_data, test_data,
         npergrad=args1.npergrad
     )

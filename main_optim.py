@@ -12,11 +12,11 @@ from lib.data.datasets import *
 from optim import *
 
 
-N_GRADS = 1024 
-N_PERGRAD = 128 
+N_GRADS = 1024
+N_PERGRAD = 128
 
-EVAL_BATCHSIZE = N_PERGRAD 
-N_WORKERS = 6 
+EVAL_BATCHSIZE = N_PERGRAD
+N_WORKERS = 6
 
 
 @torch.no_grad()
@@ -33,7 +33,7 @@ def test(model, data, batch_size=EVAL_BATCHSIZE):
 
 
 def train(
-    model, train_data, optim, nepochs, 
+    model, train_data, optim, nepochs,
     test_data=None, decay_at=[], batch_size=N_PERGRAD, save='trained.pth',
 ):
     criterion = nn.functional.cross_entropy
@@ -68,7 +68,7 @@ def train(
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', choices=['resnet20', 'resnet32', 'mobilenet', 'wideresnet-22-2', 'wideresnet-40-2', 'wideresnet-22-4'], required=True)
-    parser.add_argument('--dataset', type=str, required=True)
+    parser.add_argument('--dataset_path', type=str, required=True)
     parser.add_argument('--optim', choices=['sgd', 'adam', 'mfac'], required=True)
     parser.add_argument('--ngrads', type=int, default=N_GRADS)
     parser.add_argument('--save', type=str, default='trained.pth')
@@ -80,27 +80,27 @@ if __name__ == '__main__':
     if args1.model == 'resnet20':
         from lib.models.resnet_cifar10 import *
         model = resnet20()
-        train_data, test_data = cifar10_get_datasets(args1.dataset)
+        train_data, test_data = get_datasets('cifar10', args1.dataset_path)
     if args1.model == 'resnet32':
         from lib.models.resnet_cifar10 import *
         model = resnet32()
-        train_data, test_data = cifar10_get_datasets(args1.dataset)
+        train_data, test_data = get_datasets('cifar10', args1.dataset_path)
     if args1.model == 'mobilenet':
         from lib.models.mobilenet import *
         model = mobilenet()
-        train_data, test_data = imagenet_get_datasets(args1.dataset)
+        train_data, test_data = get_datasets('imagenet', args1.dataset_path)
     if args1.model == 'wideresnet-22-2':
         from lib.models.wide_resnet import *
         model = Wide_ResNet(22, 2, 0, 100)
-        train_data, test_data = cifar100_get_datasets(args1.dataset)
+        train_data, test_data = get_datasets('cifar100', args1.dataset_path)
     if args1.model == 'wideresnet-40-2':
         from lib.models.wide_resnet import *
         model = Wide_ResNet(40, 2, 0, 100)
-        train_data, test_data = cifar100_get_datasets(args1.dataset)
+        train_data, test_data = get_datasets('cifar100', args1.dataset_path)
     if args1.model == 'wideresnet-22-4':
         from lib.models.wide_resnet import *
         model = Wide_ResNet(22, 4, 0, 100)
-        train_data, test_data = cifar100_get_datasets(args1.dataset)
+        train_data, test_data = get_datasets('cifar100', args1.dataset_path)
 
     dev = torch.device('cuda:0')
     torch.cuda.set_device(dev)
@@ -116,7 +116,7 @@ if __name__ == '__main__':
 
     optim = {
         'sgd': lambda: torch.optim.SGD(
-            model.parameters(), 
+            model.parameters(),
             lr=.1, momentum=.9, weight_decay=args1.weightdecay
         ),
         'adam': lambda: torch.optim.Adam(model.parameters()),
@@ -132,7 +132,7 @@ if __name__ == '__main__':
 
     if args1.model in ['resnet20', 'resnet32']:
         train(
-            model, train_data, optim, 164, decay_at=[82, 123], 
+            model, train_data, optim, 164, decay_at=[82, 123],
             batch_size=args1.batchsize, test_data=test_data, save=args1.save
         )
     if 'wideresnet' in args1.model:
@@ -142,6 +142,6 @@ if __name__ == '__main__':
         )
     if args1.model in ['mobilenet']:
         train(
-            model, train_data, optim, 100, decay_at=[50, 75], 
+            model, train_data, optim, 100, decay_at=[50, 75],
             batch_size=args1.batchsize, test_data=test_data, save=args1.save
         )
