@@ -19,6 +19,7 @@ EVAL_BATCHSIZE = N_PERGRAD
 N_WORKERS = 6 
 
 
+# Test model `model` on dataset `data` using batchsize `batch_size`
 @torch.no_grad()
 def test(model, data, batch_size=EVAL_BATCHSIZE):
     preds = []
@@ -32,9 +33,12 @@ def test(model, data, batch_size=EVAL_BATCHSIZE):
     return torch.mean((torch.cat(preds) == torch.cat(ys)).float()).item()
 
 
+# Train model `model` on dataset `train_data` using optimizer `optim`, batchsize `batch_size` and 
+# decaying the learning rate by a factor of 0.1 before each epoch in `decay_at`. Further, test the
+# current model after each epoch on dataset `test_data` and save a checkpoint as file `save`.
 def train(
     model, train_data, optim, nepochs, 
-    test_data=None, decay_at=[], batch_size=N_PERGRAD, save='trained.pth',
+    test_data=None, decay_at=[], batch_size=N_PERGRAD, save='trained.pth'
 ):
     criterion = nn.functional.cross_entropy
     for i in range(nepochs):
@@ -67,14 +71,38 @@ def train(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', choices=['resnet20', 'resnet32', 'mobilenet', 'wideresnet-22-2', 'wideresnet-40-2', 'wideresnet-22-4'], required=True)
-    parser.add_argument('--dataset', type=str, required=True)
-    parser.add_argument('--optim', choices=['sgd', 'adam', 'mfac'], required=True)
-    parser.add_argument('--ngrads', type=int, default=N_GRADS)
-    parser.add_argument('--save', type=str, default='trained.pth')
-    parser.add_argument('--batchsize', type=int, default=N_PERGRAD)
-    parser.add_argument('--momentum', type=float, default=0)
-    parser.add_argument('--weightdecay', type=float, default=0)
+    parser.add_argument(
+        '--model', choices=['resnet20', 'resnet32', 'mobilenet', 'wideresnet-22-2', 'wideresnet-40-2', 'wideresnet-22-4'], required=True,
+        help='Type of model to train.'
+    )
+    parser.add_argument(
+        '--dataset', type=str, required=True,
+        help='Path to dataset to use for training.'
+    )
+    parser.add_argument(
+        '--optim', choices=['sgd', 'adam', 'mfac'], required=True,
+        help='Type of optimizer to use for training.'
+    )
+    parser.add_argument(
+        '--ngrads', type=int, default=N_GRADS,
+        help='Size of the gradient buffer to use for the M-FAC optimizer.'
+    )
+    parser.add_argument(
+        '--save', type=str, default='trained.pth',
+        help='Name of the file where the checkpoint of the most recent epoch is persisted.'
+    )
+    parser.add_argument(
+        '--batchsize', type=int, default=N_PERGRAD,
+        help='Batchsize to use for training.'
+    )
+    parser.add_argument(
+        '--momentum', type=float, default=0,
+        help='Momentum to use for the optimizer.'
+    )
+    parser.add_argument(
+        '--weightdecay', type=float, default=0,
+        help='Weight decay to use for the optimizer.'
+    )
     args1 = parser.parse_args()
 
     if args1.model == 'resnet20':
