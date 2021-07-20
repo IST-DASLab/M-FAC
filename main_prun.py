@@ -20,6 +20,7 @@ EVAL_BATCHSIZE = 256
 N_WORKERS = 6
 
 
+# Load model state stored in `path` into model `model`
 def load_model(path, model):
     tmp = torch.load(path)['state_dict']
     for k in list(tmp.keys()):
@@ -27,7 +28,7 @@ def load_model(path, model):
         del tmp[k]
     model.load_state_dict(tmp)
 
-
+# Test model `model` on dataset `data` using batchsize `batch_size`
 @torch.no_grad()
 def test(model, data, batch_size=EVAL_BATCHSIZE):
     preds = []
@@ -42,6 +43,7 @@ def test(model, data, batch_size=EVAL_BATCHSIZE):
         ys.append(y)
     return torch.mean((torch.cat(preds) == torch.cat(ys)).float()).item()
 
+# Reset the batch normalization statistics
 @torch.no_grad()
 def reset_bnstats(model, data, n_batches=1000, batch_size=EVAL_BATCHSIZE):
     i = 0
@@ -57,6 +59,7 @@ def reset_bnstats(model, data, n_batches=1000, batch_size=EVAL_BATCHSIZE):
             i += 1
 
 
+# Get an unrolled gradient vector for parameters `params` of model `model`
 @torch.no_grad()
 def get_gvec(model, params):
     named_parameters = dict(model.named_parameters())
@@ -64,11 +67,14 @@ def get_gvec(model, params):
         named_parameters[p].grad.reshape(-1) for p in params
     ])
 
+# Zero all gradients of model `model`
 @torch.no_grad()
 def zero_grads(model):
     for p in model.parameters():
         p.grad = None
 
+# Collect gradients required by M-FAC pruner `pruner `from dataset `data` for model `model`
+# using batchsize `npergrad`
 def collect_grads(model, pruner, data, npergrad=N_PERGRAD):
     criterion = nn.functional.cross_entropy
     i = 0
@@ -90,6 +96,14 @@ def collect_grads(model, pruner, data, npergrad=N_PERGRAD):
             i += 1
 
 
+# Perform oneshot pruning for sparsity targets `sparsities` of model `model`
+# using pruner `pruner`. The M-FAC approximation is computed from `train_data`
+# using a batchsize of `npergrad` per individual gradient. `recomps` is list of
+# epochs before which to recompute the M-FAC approximation and `tests`
+# indicates the pruning steps after which to compute the test accuracy. 
+# NOTE: The pruning is always performed relative to the last recomputation /
+# the dense model, i.e. for M-FAC it does not use the updated weights of the
+# previous step.
 def oneshot_prune(
     model, pruner, sparsities, recomps, tests, train_data, test_data, npergrad=N_PERGRAD
 ):
@@ -119,20 +133,52 @@ def oneshot_prune(
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--model', choices=['resnet20'], required=True, help="This is an example script to demonstrate MFAC pruning on ResNet20/CIFAR10 model")
-    parser.add_argument('--dataset_path', type=str, required=True)
-    parser.add_argument('--pruner', choices=['GMP', 'MFAC'], required=True,
-    help="GMP - global magnitude pruner; MFAC - matrix free approximations of second order information")
+    parser.add_argument(
+        '--model', choices=['resnet20'], required=True, 
+        help='This is an example script to demonstrate MFAC pruning on ResNet20/CIFAR10'
+    )
+    parser.add_argument(
+        '--dataset_path', type=str, required=True,
+        help='Path to dataset.'
+    )
+    parser.add_argument(
+        '--pruner', choices=['GMP', 'MFAC'], required=True,
+        help='GMP - global magnitude pruner; MFAC - matrix free approximations of second order information'
+    )
 
-    parser.add_argument('--ngrads', type=int, default=N_GRADS)
-    parser.add_argument('--blocksize', type=int, default=-1)
-    parser.add_argument('--pages', type=int, default=1)
-    parser.add_argument('--perbatch', type=int, default=1)
-    parser.add_argument('--npergrad', type=int, default=N_PERGRAD)
+    parser.add_argument(
+        '--ngrads', type=int, default=N_GRADS,
+        help='Number of gradients to use for M-FAC.'
+    )
+    parser.add_argument(
+        '--blocksize', type=int, default=-1,
+        help='Blocksize to use for M-FAC; -1 means approximating the full matrix.'
+    )
+    parser.add_argument(
+        '--pages', type=int, default=1,
+        help='Number of CPU "pages" to use for full M-FAC approximation; must evenly divide `ngrads`.'
+    )
+    parser.add_argument(
+        '--perbatch', type=int, default=1,
+        help='Number of blocks to handle simulatenously on the GPU; only relevant if blocksize != -1.'
+    )
+    parser.add_argument(
+        '--npergrad', type=int, default=N_PERGRAD,
+        help='Batchsize for individual gradients used in the M-FAC approximation.'
+    )
 
-    parser.add_argument('--sparsities', type=float, nargs='+', default=[1.])
-    parser.add_argument('--recomps', type=int, nargs='+', default=[0])
-    parser.add_argument('--tests', type=int, nargs='+', default=[0])
+    parser.add_argument(
+        '--sparsities', type=float, nargs='+', default=[1.],
+        help='List of model sparsities to perform oneshot pruning for.'
+    )
+    parser.add_argument(
+        '--recomps', type=int, nargs='+', default=[0],
+        help='Pruning steps after which to recompute the M-FAC approximation.' 
+    )
+    parser.add_argument(
+        '--tests', type=int, nargs='+', default=[0],
+        help='Pruning steps after which to compute the test accuracy.'
+    )
 
     args1 = parser.parse_args()
 
