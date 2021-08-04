@@ -76,7 +76,7 @@ if __name__ == '__main__':
         help='Type of model to train.'
     )
     parser.add_argument(
-        '--dataset', type=str, required=True,
+        '--dataset_path', type=str, required=True,
         help='Path to dataset to use for training.'
     )
     parser.add_argument(
