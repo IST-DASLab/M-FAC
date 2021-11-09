@@ -1,8 +1,9 @@
 # M-FAC
 
 This repository contains efficient reference implementations of the static and
-dynamic M-FAC algorithms plus some sample code demonstrating their use in
-optimization and pruning. 
+dynamic M-FAC algorithms, introduced in the paper *"M-FAC: Efficient Matrix-Free 
+Approximations of Second-Order Information"* to be published at NeurIPS 2021, plus 
+some sample code demonstrating their use in optimization and pruning. 
 
 More concretely, it contains the following:
 
@@ -81,3 +82,41 @@ There are also some additional paramters `--blocksize` for blocked estimation
 blocks are to be handled simultaneously) and `--pages` to specify how many
 pages to use for a full blocksize estimation where the gradients do not fully
 fit into GPU memory.
+
+## Models:
+
+Checkpoints of the following sparse MobileNetV1 and ResNet50 models from the 
+practical pruning experiments can be found 
+[at this link](https://seafile.ist.ac.at/d/5d06074221604d90909b/). They are 
+compatible with the model definitions in the 
+[STR repository](https://github.com/RAIVNLab/STR).
+
+| Model @ Sparsity | MBv1 @ 75% | MBv1 @ 89% | RN50 @ 95% | RN50 @ 98% |
+| ---------------- | :--------: | :--------: | :--------: | :--------: |
+| Accuracy         | 70.9       | 67.2       | 72.6       | 67.6       |
+
+ Furthermore, our best finetuned BERT-tiny and BERT-mini models for SQuADv2 and 
+ GLUE tasks are uploaded to [HuggingFace](https://huggingface.co/M-FAC).
+
+## BibTeX
+
+To be updated after NeurIPS 2021.
+
+```
+@article{DBLP:journals/corr/abs-2107-03356,
+  author    = {Elias Frantar and
+               Eldar Kurtic and
+               Dan Alistarh},
+  title     = {Efficient Matrix-Free Approximations of Second-Order Information,
+               with Applications to Pruning and Optimization},
+  journal   = {CoRR},
+  volume    = {abs/2107.03356},
+  year      = {2021},
+  url       = {https://arxiv.org/abs/2107.03356},
+  eprinttype = {arXiv},
+  eprint    = {2107.03356},
+  timestamp = {Tue, 20 Jul 2021 15:08:33 +0200},
+  biburl    = {https://dblp.org/rec/journals/corr/abs-2107-03356.bib},
+  bibsource = {dblp computer science bibliography, https://dblp.org}
+}
+```
