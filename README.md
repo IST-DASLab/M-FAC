@@ -96,7 +96,7 @@ compatible with the model definitions in the
 | Accuracy         | 70.9       | 67.2       | 72.6       | 67.6       |
 
  Furthermore, our best finetuned BERT-tiny and BERT-mini models for SQuADv2 and 
- GLUE tasks are uploaded to [HuggingFace](https://huggingface.co/M-FAC).
+ GLUE tasks are uploaded to [HuggingFace Hub](https://huggingface.co/M-FAC).
 
 ## BibTeX
 
