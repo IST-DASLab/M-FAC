@@ -16,8 +16,10 @@ More concretely, it contains the following:
   simultaneous handling of multiple blocks: `prun.py`
 - An implementation of the full (non-blocked) static algorithm with efficient
   paging: `prun.py` 
-- An implementation of a pruner that utilizes the static algorithm: `prun.py`
-- A script for running simple one-shot (& recomputation) experiments: `main_prun.py`
+- An implementation of a pruner that utilizes the static algorithm:
+  `main_prun.py`
+- A script for running simple gradual and one-shot (also with recomputation)
+  pruning experiments: `main_prun.py`
 - Some standard library code for models, data loading, etc.
 
 ## Optimization:
@@ -54,34 +56,51 @@ has support for sparse optimization.
 ## Pruning:
 
 The file `main_prun.py` provides a simple interface for executing various
-one-shot experiments.  Only support for ResNet20/CIFAR with a corresponding
-pretrained model is currently included, but other models should be
-straight-forward to add. Here follows an example call: 
+gradual and one-shot experiments.  Only support for ResNet20/CIFAR with a
+corresponding pretrained model is currently included, but other models should
+be straight-forward to add. Here follows an example call: 
 
 ```
-python3 main_prun.py \
-    --model resnet20 \
-    --dataset DATASET \
-    --pruner mfac \
-    --ngrads 1024 \
-    --sparsities 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 \
-    --recomps 0 1 2 3 4 5 6 7 8 \
-    --tests 0 1 2 3 4 5 6 7 8
+CUDA_VISIBLE_DEVICES=0 python3 -u main_prun.py \
+	--model resnet20 \
+	--checkpoint checkpoints/resnet20_cifar10.pth.tar \
+	--data datasets \
+	--nepochs 10 \
+	--optim sgd \
+	--lr .005 \
+	--momentum .9 \
+	--batchsize 128 \
+	--drop_at 7 9 \
+	--pruner mfac \
+	--blocksize 128 \
+	--nrecomps 16 \
+	--ngrads_schedule 64 \
+	--sparsities .5 .75 .875 \
+	--prun_every 2 \
+	--prun_lrs .005 .0005 \
+	--prefix experiments/rn20-test/model
 ```
 
-The most interesting arguments are `--sparsities`, `--recomps` and `--tests`.
-The first specifies different sparsity levels to consider; the second declares
-after which pruning steps to recompute the inverse Hessian estimation and the
-third after which pruning steps to evaluate the model. For example, the call
-above indicates that we are interested in pruning our model to 9 different
-sparsity levels, while recomputing the inverse Hessian estimation after each
-level and always also printing the model accuracy.
+Most arguments are straight-forward, see also `--help` for their descriptions.
+For gradual pruning, the key arguments are `--sparsities`, `--prun_every` and
+`--prun_lrs`. The first specifies the individual pruning steps in terms of
+overall sparsity relative to all *pruned* parameters (`--adjust_sparsities`
+automatically turns these into overall sparsities with respect to *all*
+parameters), starting with initial pruning before epoch
+0. The second defines how many finetuning epochs there are in between pruning
+   steps while the third gives the learning rates to use for those (as dicussed
+in the paper, we find that dropping the learning rate one epoch before the next
+pruning step can be helpful). After the last pruning step is complete,
+additional finetuning will begin with base learning rate `--lr` which is
+dropped by `--drop_by` (default 0.1) at epochs `--drop_at` (overall, i.e. also
+counting the gradual pruning ones). For oneshot experiments, simply set
+`--nepochs` to 0.
 
-There are also some additional paramters `--blocksize` for blocked estimation
-(with the advanced optimization parameter `--perbatch` to specify how many
-blocks are to be handled simultaneously) and `--pages` to specify how many
-pages to use for a full blocksize estimation where the gradients do not fully
-fit into GPU memory.
+There are also additional paramters `--blocksize` for blocked estimation (with
+the advanced optimization parameter `--perbatch` to specify how many blocks are
+to be handled simultaneously) and `--pages` to specify how many pages to use
+for a full blocksize estimation where the gradients do not fully fit into GPU
+memory (used when `--blocksize` is -1).
 
 ## Models:
 

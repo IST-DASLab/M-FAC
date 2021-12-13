@@ -1,41 +1,37 @@
-# Script for running simple oneshot pruning experiments.
-
-
 import argparse
+import os
+import time
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.nn import Linear
-from torch.nn.modules.conv import _ConvNd
+import numpy as np
 
+from lib.data.datasets import get_datasets 
 from prun import *
-from lib.data.datasets import get_datasets
 
 
-N_GRADS = 1024
-N_PERGRAD = 32
-
-EVAL_BATCHSIZE = 256
-N_WORKERS = 6
-
-
-# Load model state stored in `path` into model `model`
 def load_model(path, model):
-    tmp = torch.load(path)['state_dict']
+    tmp = torch.load(path, map_location='cpu')
+    if 'state_dict' in tmp:
+        tmp = tmp['state_dict']
+    if 'model' in tmp:
+        tmp = tmp['model']
     for k in list(tmp.keys()):
-        tmp[k.replace('module.', '')] = tmp[k]
-        del tmp[k]
+        if 'module.' in k:
+            tmp[k.replace('module.', '')] = tmp[k]
+            del tmp[k]
     model.load_state_dict(tmp)
 
-# Test model `model` on dataset `data` using batchsize `batch_size`
+def load_mask(path):
+    tmp = torch.load(path, map_location='cpu')
+    return tmp.get('mask', None)
+
 @torch.no_grad()
-def test(model, data, batch_size=EVAL_BATCHSIZE):
+def test(model, dataloader):
     preds = []
     ys = []
-    for batch in DataLoader(
-        data, shuffle=True, batch_size=batch_size, num_workers=N_WORKERS, pin_memory=True
-    ):
+    for batch in dataloader:
         x, y = batch
         x = x.to(model.device)
         y = y.to(model.device)
@@ -43,23 +39,24 @@ def test(model, data, batch_size=EVAL_BATCHSIZE):
         ys.append(y)
     return torch.mean((torch.cat(preds) == torch.cat(ys)).float()).item()
 
-# Reset the batch normalization statistics
+
 @torch.no_grad()
-def reset_bnstats(model, data, n_batches=1000, batch_size=EVAL_BATCHSIZE):
+def get_pvec(model, params):
+    state_dict = model.state_dict()
+    return torch.cat([
+        state_dict[p].reshape(-1) for p in params
+    ])
+
+@torch.no_grad()
+def set_pvec(w, model, params, nhwc=False):
+    state_dict = model.state_dict()
     i = 0
-    while True:
-        for batch in DataLoader(
-            data, shuffle=True, batch_size=EVAL_BATCHSIZE, num_workers=N_WORKERS, pin_memory=True
-        ):
-            if i == n_batches:
-                return
-            x, y = batch
-            x = x.to(model.device)
-            model(x)
-            i += 1
+    for p in params:
+        count = state_dict[p].numel()
+        state_dict[p] = w[i:(i + count)].reshape(state_dict[p].shape)
+        i += count
+    model.load_state_dict(state_dict)
 
-
-# Get an unrolled gradient vector for parameters `params` of model `model`
 @torch.no_grad()
 def get_gvec(model, params):
     named_parameters = dict(model.named_parameters())
@@ -67,153 +64,393 @@ def get_gvec(model, params):
         named_parameters[p].grad.reshape(-1) for p in params
     ])
 
-# Zero all gradients of model `model`
+@torch.no_grad()
+def apply_mask(mask, model, params):
+    state_dict = model.state_dict()
+    i = 0
+    for p in params:
+        param = state_dict[p]
+        count = param.numel()
+        state_dict[p] *= mask[i:(i + count)].reshape(param.shape).float()
+        i += count
+    model.load_state_dict(state_dict)
+    
 @torch.no_grad()
 def zero_grads(model):
     for p in model.parameters():
         p.grad = None
 
-# Collect gradients required by M-FAC pruner `pruner `from dataset `data` for model `model`
-# using batchsize `npergrad`
-def collect_grads(model, pruner, data, npergrad=N_PERGRAD):
-    criterion = nn.functional.cross_entropy
-    i = 0
-    while True:
-        for batch in DataLoader(
-            data, shuffle=False, batch_size=npergrad, num_workers=N_WORKERS, pin_memory=True
-        ):
-            if i == pruner.ngrads:
-                return
+
+class MagPruner:
+
+    def __init__(self, model, params):
+        self.model = model
+        self.params = params
+
+    def prune(self, mask, sparsity):
+        w = get_pvec(self.model, self.params)
+        dev = w.device
+        ndrop = int(w.numel() * (sparsity - torch.mean((~mask).float())))
+        w1 = w[mask] 
+        d1 = w1.numel()
+
+        p = torch.abs(w1) 
+        psorted = torch.argsort(p)
+        drop = psorted[:ndrop]
+
+        w1[drop] = 0
+        w[mask] = w1
+        tmp = torch.ones_like(w1)
+        tmp[drop] = 0
+        mask[mask] = tmp > 0
+        return mask, w
+
+class MFACPruner:
+
+    def __init__(
+        self,
+        model, params,
+        prunloader, criterion,
+        ngrads, blocksize, perbatch, damp, npages 
+    ):
+        self.model = model
+        self.params = params
+        self.prunloader = prunloader
+        self.criterion = criterion
+        self.ngrads = ngrads
+        self.blocksize = blocksize
+        self.perbatch = perbatch
+        self.damp = damp
+        self.npages = npages
+
+    def prune(self, mask, sparsity):
+        w = get_pvec(self.model, self.params)
+        dev = w.device
+        ndrop = int(w.numel() * (sparsity - torch.mean((~mask).float())))
+        w1 = w[mask] 
+        d1 = w1.numel()
+
+        zero_grads(self.model)
+        self.model.eval()
+        grads = torch.zeros((self.ngrads, d1), device='cpu')
+        for i, batch in enumerate(self.prunloader):
+            if (i + 1) % self.ngrads == 0:
+                break
             x, y = batch
-            x = x.to(model.device)
-            y = y.to(model.device)
-
-            loss = criterion(model(x), y)
+            x = x.to(dev)
+            y = y.to(dev)
+            loss = self.criterion(self.model(x), y)
             loss.backward()
+            grads[i] = get_gvec(self.model, self.params)[mask].to('cpu')
+            zero_grads(self.model)
+        self.model.train()
 
-            pruner.report_grad(get_gvec(model, pruner.params))
-            zero_grads(model)
-            i += 1
+        if self.blocksize == -1:
+            hinv = HInvFastSwap(grads, self.damp, self.npages)
+        else:
+            hinv = HInvFastBlock(
+                grads, self.blocksize, self.perbatch, dev, damp=self.damp
+            )
 
+        diag = hinv.diag().to(dev)
+        p = w1 ** 2 / (2. * diag)
+        psorted = torch.argsort(p)
+        drop = psorted[:ndrop]
 
-# Perform oneshot pruning for sparsity targets `sparsities` of model `model`
-# using pruner `pruner`. The M-FAC approximation is computed from `train_data`
-# using a batchsize of `npergrad` per individual gradient. `recomps` is list of
-# epochs before which to recompute the M-FAC approximation and `tests`
-# indicates the pruning steps after which to compute the test accuracy. 
-# NOTE: The pruning is always performed relative to the last recomputation /
-# the dense model, i.e. for M-FAC it does not use the updated weights of the
-# previous step.
-def oneshot_prune(
-    model, pruner, sparsities, recomps, tests, train_data, test_data, npergrad=N_PERGRAD
+        mask1 = mask.clone() 
+        tmp1 = torch.ones_like(w1)
+        tmp1[torch.argsort(w1 ** 2)[:ndrop]] = 0
+
+        tmp = torch.zeros_like(w1)
+        tmp[drop] = -w1[drop] / diag[drop]
+        w1 += hinv.mul(tmp).to(dev)
+        w1[drop] = 0
+
+        w[mask] = w1
+        tmp = torch.ones_like(w1)
+        tmp[drop] = 0
+        mask[mask] = tmp > 0
+
+        return mask, w
+
+def gradual_prun(
+    model, params, mask,
+    trainloader, testloader,
+    make_optim, nepochs, lr_schedule, 
+    pruner, prunepochs, sparsities, ngrads_schedule, nrecomps,
+    prefix
 ):
-    w = None
-    drop = None
-    ignore = None
-    for i, sparsity in enumerate(sparsities):
-        if i in recomps:
-            if i > 0:
-                pruner.update(w, drop, ignore)
-            if pruner.ngrads:
-                print('Collecting grads ...')
-                collect_grads(model, pruner, train_data)
-                zero_grads(model)
-            print('Preparing to prune ...')
-            pruner.prepare()
-        w, drop, ignore = pruner.prune(sparsity - pruner.sparsity())
-        if i in tests:
-            state_dict = model.state_dict()
-            pruner.set_pvec(w)
-            print('Evaluating ...')
-            print('sparsity = %.2f\nvalidation_accuracy = %.3f' % (sparsity, test(model, test_data)))
-            torch.save(model.state_dict(), 'pruned.pth')
-            model.load_state_dict(state_dict)
+    runloss = 0.
+    step = 0
+    optim = make_optim(0, mask)
+    sparsities += [torch.mean((~mask).float()).item()]
+
+    oneshot = nepochs == 0 
+    if oneshot:
+        nepochs = 1
+    for epoch in range(nepochs):
+        if epoch in prunepochs:
+            tick = time.time()
+            i = prunepochs.index(epoch)
+            if sparsities[i] != 0:
+                if isinstance(pruner, MFACPruner):
+                    pruner.ngrads = ngrads_schedule[i]
+                fac = ((1. - sparsities[i]) / (1. - sparsities[i - 1])) ** (1./nrecomps)
+                for j in range(1, nrecomps + 1):
+                    mask, w = pruner.prune(mask, 1. - ((1. - sparsities[i - 1]) * (fac**j)))
+                    set_pvec(w, model, params)
+                duration = time.time() - tick
+
+                model.eval()
+                print('prun %02d: sparsity=%.3f, accuracy=%.3f, time=%.1fs' % (
+                    i, torch.mean((~mask).float()).item(), test(model, testloader), duration 
+                ))
+                model.train()
+                torch.save(
+                    {'model': model.state_dict(), 'mask': mask},
+                    '%s-prune-%03d.pth' % (prefix, int(sparsities[i] * 1000))
+                )
+            else:
+                sparsities[0] = sparsities[-1]
+            optim = make_optim(epoch, mask)
+            if oneshot:
+                return
+
+        for param_group in optim.param_groups:
+            param_group['lr'] = lr_schedule[epoch]
+
+        tick = time.time()
+        for x, y in trainloader:
+            x = x.to(dev)
+            y = y.to(dev)
+            optim.zero_grad()
+            loss = criterion(model(x), y)
+            runloss = .99 * runloss + .01 * loss.item()
+            loss.backward()
+            optim.step()
+            apply_mask(mask, model, params)
+
+            step += 1
+            if step % 100 == 0:
+                print('step %06d: runloss=%.3f' % (step, runloss))
+        duration = time.time() - tick
+
+        model.eval()
+        print('epoch %02d: accuracy=%.3f, time=%.1fs' % (epoch, test(model, testloader), duration))
+        model.train()
+        torch.save(
+            {'model': model.state_dict(), 'mask': mask, 'epoch': epoch}, '%s-last.pth' % prefix
+        )
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        '--model', choices=['resnet20'], required=True, 
-        help='This is an example script to demonstrate MFAC pruning on ResNet20/CIFAR10'
+        '--model', choices=['resnet20'], required=True,
+        help='Model type.'
     )
     parser.add_argument(
-        '--dataset_path', type=str, required=True,
+        '--checkpoint', type=str, default='',
+        help='Checkpoint to start pruning from.'
+    )
+    parser.add_argument(
+        '--data', type=str, required=True,
         help='Path to dataset.'
     )
     parser.add_argument(
-        '--pruner', choices=['GMP', 'MFAC'], required=True,
-        help='GMP - global magnitude pruner; MFAC - matrix free approximations of second order information'
+        '--prefix', type=str, default='experiment/model',
+        help='Prefix for intermediate checkpoints and results.' 
+    )
+    parser.add_argument(
+        '--adjust-sparsities', action='store_true',
+        help='Adjust sparsities relative from relative to pruned layers to global.'
     )
 
     parser.add_argument(
-        '--ngrads', type=int, default=N_GRADS,
-        help='Number of gradients to use for M-FAC.'
+        '--batchsize', type=int, default=128,
+        help='Dataloader (and optimizer) batch size.'
     )
     parser.add_argument(
-        '--blocksize', type=int, default=-1,
-        help='Blocksize to use for M-FAC; -1 means approximating the full matrix.'
+        '--nepochs', type=int, required=True,
+        help='Total number of epochs.'
     )
     parser.add_argument(
-        '--pages', type=int, default=1,
-        help='Number of CPU "pages" to use for full M-FAC approximation; must evenly divide `ngrads`.'
-    )
-    parser.add_argument(
-        '--perbatch', type=int, default=1,
-        help='Number of blocks to handle simulatenously on the GPU; only relevant if blocksize != -1.'
-    )
-    parser.add_argument(
-        '--npergrad', type=int, default=N_PERGRAD,
-        help='Batchsize for individual gradients used in the M-FAC approximation.'
+        '--nworkers', type=int, default=8,
+        help='Number of dataloader workers.'
     )
 
     parser.add_argument(
-        '--sparsities', type=float, nargs='+', default=[1.],
-        help='List of model sparsities to perform oneshot pruning for.'
+        '--optim', choices=['sgd'], default='sgd',
+        help='Optimizer to use.'
     )
     parser.add_argument(
-        '--recomps', type=int, nargs='+', default=[0],
-        help='Pruning steps after which to recompute the M-FAC approximation.' 
+        '--lr', type=float, default=.005,
+        help='Optimizer base learning rate.'
     )
     parser.add_argument(
-        '--tests', type=int, nargs='+', default=[0],
-        help='Pruning steps after which to compute the test accuracy.'
+        '--momentum', type=float, default=.9,
+        help='Optimizer momentum.'
+    )
+    parser.add_argument(
+        '--weightdecay', type=float, default=0,
+        help='Optimizer weight decay.'
+    )
+    parser.add_argument(
+        '--drop_at', type=int, nargs='+', default=[],
+        help='List of epochs where the learning rate is dropped.'
+    )
+    parser.add_argument(
+        '--drop_by', type=float, default=.1,
+        help='Factor to drop the learning rate by.'
+    )
+
+    parser.add_argument(
+        '--pruner', choices=['mag', 'mfac'], default='mag',
+        help='Pruner to use.'
+    )
+    parser.add_argument(
+        '--prun_every', type=int, default=1,
+        help='Pruner every X epochs.'
+    )
+    parser.add_argument(
+        '--sparsities', type=float, nargs='+', default=[],
+        help='List of pruning steps.'
+    )
+    parser.add_argument(
+        '--ngrads_schedule', type=int, nargs='+', default=[64],
+        help='Number of gradients to use for M-FAC, either a constant or a list with one value per pruning step.' 
+    )
+    parser.add_argument(
+        '--nrecomps', type=int, default=16,
+        help='Number of recomputations to use for M-FAC.'
+    )
+    parser.add_argument(
+        '--prun_batchsize', type=int, default=32,
+        help='Batchsize for individual M-FAC gradients.'
+    )
+    parser.add_argument(
+        '--prun_lrs', type=float, nargs='+', default=None,
+        help='Cycle through these learning rates in between pruning steps.'
+    )
+    parser.add_argument(
+        '--blocksize', type=int, default=128,
+        help='M-FAC blocksize; -1 will use full version.'
+    )
+    parser.add_argument(
+        '--perbatch', type=int, default=10000,
+        help='Number of M-FAC blocks to handle simulatenously on the GPU.'
+    )
+    parser.add_argument(
+        '--prundamp', type=float, default=1e-5,
+        help='M-FAC dampening.'
+    )
+    parser.add_argument(
+        '--prunpages', type=int, default=1,
+        help='Number of pages to use for full M-FAC; i.e. when blocksize is -1.'
     )
 
     args1 = parser.parse_args()
 
     if args1.model == 'resnet20':
-        from lib.models.resnet_cifar10 import resnet20
+        from lib.models.resnet_cifar10 import *
         model = resnet20()
-        load_model('checkpoints/resnet20_cifar10.pth.tar', model)
-        train_data, test_data = get_datasets('cifar10', args1.dataset_path)
-        # prune only weights of Linear and Conv layers - standard
+        load_model(args1.checkpoint, model)
+        train_data, test_data = get_datasets('cifar10', args1.data)
         params = [
-            name + ".weight" for name, mod in model.named_modules() if (isinstance(mod, Linear) or isinstance(mod, _ConvNd))
+            n for n, _ in model.named_parameters() if ('conv' in n or 'fc' in n) and 'bias' not in n
         ]
 
     dev = torch.device('cuda:0')
     model = model.to(dev)
+    if torch.cuda.device_count() > 1:
+        model = nn.DataParallel(model, device_ids=list(range(torch.cuda.device_count())))
+        params = ['module.' + p for p in params]
     model.device = dev
-    model.dtype = torch.float32
 
-    if args1.model == 'resnet20':
-        # Fix messed up batch-norm stats of pretrained model
-        reset_bnstats(model, train_data)
-    model.eval() # freeze batch-norm params
+    trainloader = DataLoader(
+        train_data, 
+        shuffle=True, batch_size=args1.batchsize, num_workers=args1.nworkers, pin_memory=True
+    )
+    testloader = DataLoader(
+        test_data, 
+        shuffle=False, batch_size=args1.batchsize, num_workers=args1.nworkers, pin_memory=True
+    )
+    prunloader = DataLoader(
+        train_data,
+        shuffle=True, batch_size=args1.prun_batchsize, num_workers=args1.nworkers, pin_memory=True
+    )
 
-    pruners = {
-        'GMP': lambda: MagPruner(model, params),
-        'MFAC': lambda: MFACPruner(
-            model, params, args1.ngrads,
-            blocksize=args1.blocksize, pages=args1.pages, perbatch=args1.perbatch
-        )
+    criterion = torch.nn.functional.cross_entropy
+
+    make_pruner = {
+        'mag': lambda: MagPruner(model, params),
+        'mfac': lambda: MFACPruner(
+            model, params, prunloader, criterion, 0, 
+            args1.blocksize, args1.perbatch, args1.prundamp, args1.prunpages
+        ) 
     }
-    pruner = pruners[args1.pruner]()
+    pruner = make_pruner[args1.pruner]()
 
-    oneshot_prune(
-        model, pruner,
-        args1.sparsities, args1.recomps, args1.tests,
-        train_data, test_data,
-        npergrad=args1.npergrad
+    def make_sgd(epoch, mask):
+        return torch.optim.SGD(
+            model.parameters(), lr=0, momentum=args1.momentum, weight_decay=args1.weightdecay
+        )
+    make_optim = {
+        'sgd': make_sgd
+    }
+
+    prunepochs = [i * args1.prun_every for i in range(len(args1.sparsities))]
+    if len(args1.ngrads_schedule) == 1 and len(prunepochs) > 1:
+       args1.ngrads_schedule = args1.ngrads_schedule * len(prunepochs)
+
+    if args1.prun_lrs is None:
+        args1.prun_lrs = [args1.lr]
+    if len(args1.prun_lrs) != args1.prun_every:
+        args1.prun_lrs = [args1.prun_lrs[0]] * args1.prun_every
+    lr_schedule = args1.prun_lrs * (len(prunepochs) - 1)
+
+    lr = args1.lr
+    for epoch in args1.drop_at + [args1.nepochs]:
+        lr_schedule += [lr] * (epoch - len(lr_schedule))
+        lr *= args1.drop_by
+
+    if args1.adjust_sparsities:
+        adjustment = get_pvec(model, [n for n, p in model.named_parameters()]).numel() / get_pvec(model, params).numel()
+        args1.sparsities = [s * adjustment for s in args1.sparsities]
+
+    print(prunepochs)
+    print(args1.sparsities)
+    print(args1.ngrads_schedule)
+    print(lr_schedule)
+
+    if '/' in args1.prefix:
+        tmp = args1.prefix[:args1.prefix.rfind('/')]
+        if not os.path.exists(tmp):
+            os.makedirs(tmp)
+
+    # Fix broken batchnorm params for RN20
+    if args1.model == 'resnet20':
+        model.train()
+        for x, y in trainloader:
+            x = x.to(dev)
+            y = y.to(dev)
+            model(x)
+
+    mask = load_mask(args1.checkpoint) if args1.checkpoint != '' else None
+    if mask is None:
+        mask = torch.ones_like(get_pvec(model, params)) > 0
+    mask = mask.to(dev)
+
+    if args1.nepochs > 0:
+        model.eval()
+        print('initial: sparsity=%.3f, accuracy=%.3f' % (torch.mean((~mask).float()).item(), test(model, testloader)))
+        model.train()
+
+    gradual_prun(
+        model, params, mask,
+        trainloader, testloader,
+        make_optim[args1.optim], args1.nepochs, lr_schedule,
+        pruner, prunepochs, args1.sparsities, args1.ngrads_schedule, args1.nrecomps,
+        args1.prefix
     )
