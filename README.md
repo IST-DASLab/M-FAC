@@ -120,23 +120,12 @@ compatible with the model definitions in the
 
 ## BibTeX
 
-To be updated after NeurIPS 2021.
-
 ```
-@article{DBLP:journals/corr/abs-2107-03356,
-  author    = {Elias Frantar and
-               Eldar Kurtic and
-               Dan Alistarh},
-  title     = {Efficient Matrix-Free Approximations of Second-Order Information,
-               with Applications to Pruning and Optimization},
-  journal   = {CoRR},
-  volume    = {abs/2107.03356},
-  year      = {2021},
-  url       = {https://arxiv.org/abs/2107.03356},
-  eprinttype = {arXiv},
-  eprint    = {2107.03356},
-  timestamp = {Tue, 20 Jul 2021 15:08:33 +0200},
-  biburl    = {https://dblp.org/rec/journals/corr/abs-2107-03356.bib},
-  bibsource = {dblp computer science bibliography, https://dblp.org}
+@article{frantar2021m,
+  title={M-FAC: Efficient Matrix-Free Approximations of Second-Order Information},
+  author={Frantar, Elias and Kurtic, Eldar and Alistarh, Dan},
+  journal={Advances in Neural Information Processing Systems},
+  volume={35},
+  year={2021}
 }
 ```
