@@ -81,12 +81,13 @@ CUDA_VISIBLE_DEVICES=0 python3 -u main_prun.py \
 	--prefix experiments/rn20-test/model
 ```
 
-Most arguments are straight-forward, see also `--help` for their descriptions.
-For gradual pruning, the key arguments are `--sparsities`, `--prun_every` and
-`--prun_lrs`. The first specifies the individual pruning steps in terms of
-overall sparsity relative to all *pruned* parameters (`--adjust_sparsities`
-automatically turns these into overall sparsities with respect to *all*
-parameters), starting with initial pruning before epoch
+Most arguments are straight-forward, see also `--help` for a full list of
+arguments and their descriptions. For gradual pruning, the key arguments are
+`--sparsities`, `--prun_every` and `--prun_lrs`. The first specifies the
+individual pruning steps in terms of overall sparsity relative to all *pruned*
+parameters (`--adjust_sparsities` automatically turns these into overall
+sparsities with respect to *all* parameters), starting with initial pruning
+before epoch
 0. The second defines how many finetuning epochs there are in between pruning
    steps while the third gives the learning rates to use for those (as dicussed
 in the paper, we find that dropping the learning rate one epoch before the next
@@ -96,11 +97,11 @@ dropped by `--drop_by` (default 0.1) at epochs `--drop_at` (overall, i.e. also
 counting the gradual pruning ones). For oneshot experiments, simply set
 `--nepochs` to 0.
 
-There are also additional paramters `--blocksize` for blocked estimation (with
-the advanced optimization parameter `--perbatch` to specify how many blocks are
-to be handled simultaneously) and `--pages` to specify how many pages to use
-for a full blocksize estimation where the gradients do not fully fit into GPU
-memory (used when `--blocksize` is -1).
+There are also additional M-FAC paramters `--blocksize` for blocked estimation
+(with the advanced optimization parameter `--perbatch` to specify how many
+blocks are to be handled simultaneously) and `--pages` to specify how many
+pages to use for a full blocksize estimation where the gradients do not fully
+fit into GPU memory (used when `--blocksize` is -1).
 
 ## Models:
 
