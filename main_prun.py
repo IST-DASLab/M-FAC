@@ -102,8 +102,9 @@ class MagPruner:
         w[mask] = w1
         tmp = torch.ones_like(w1)
         tmp[drop] = 0
-        mask[mask] = tmp > 0
-        return mask, w
+        mask1 = mask.clone()
+        mask1[mask] = tmp > 0
+        return mask1, w
 
 class MFACPruner:
 
@@ -169,9 +170,10 @@ class MFACPruner:
         w[mask] = w1
         tmp = torch.ones_like(w1)
         tmp[drop] = 0
-        mask[mask] = tmp > 0
+        mask1 = mask.clone()
+        mask1[mask] = tmp > 0
 
-        return mask, w
+        return mask1, w
 
 def gradual_prun(
     model, params, mask,
