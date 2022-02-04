@@ -79,7 +79,7 @@ def get_mnist_datasets(data_dir):
 def get_imagenet_datasets(data_dir):
     img_size = 224  # standard
     train_transform = transforms.Compose([
-            transforms.RandomResizedCrop(img_size),
+            transforms.RandomResizedCrop(img_size, scale=(0.2, 1.0)),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             transforms.Normalize(mean=_IMAGENET_RGB_MEANS, std=_IMAGENET_RGB_STDS),
